@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: es-example-cluster
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+
+  api:
+    build: .
+    container_name: es-fastapi-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - DEFAULT_INDEX=documents
+    depends_on:
+      - elasticsearch
+
+volumes:
+  esdata:
+    driver: local
