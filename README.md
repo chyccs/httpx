@@ -15,9 +15,15 @@ es-example/
 │   ├── http_pool.py      # 전역 httpx 커넥션 풀 및 클라이언트 관리 (공통 풀)
 │   ├── es.py             # AsyncElasticsearch 연결 및 인덱스 관리
 │   ├── models.py         # Pydantic 요청/응답 모델
-│   └── main.py           # FastAPI 앱, 웹 대시보드 및 API 엔드포인트
+│   ├── search.py         # 쿼리 빌더 및 동시(병렬) 검색 실행·중복 제거·병합 로직
+│   ├── metrics.py        # Prometheus 메트릭 및 인/아웃바운드 TCP 소켓 수집기
+│   ├── templates/
+│   │   └── dashboard.html # 웹 시각화 대시보드
+│   └── main.py           # FastAPI 앱 및 API 엔드포인트
 ├── tests/
-│   └── test_api.py       # pytest 단위 테스트 (10개 테스트 케이스)
+│   ├── conftest.py       # 공용 fixture (Mock ES / TestClient)
+│   ├── test_api.py       # API 엔드포인트 테스트
+│   └── test_search.py    # 검색 로직·에러 처리 단위 테스트
 ├── .vscode/
 │   └── settings.json     # VS Code / Antigravity 가상환경 자동 인식 설정
 ├── docker-compose.yml     # Elasticsearch 8.x 컨테이너 설정

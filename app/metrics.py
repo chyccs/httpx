@@ -121,6 +121,30 @@ class DirectionalTCPConnectionCollector:
         yield gauge
 
 
+def _format_addr(addr) -> str | None:
+    return f"{addr.ip}:{addr.port}" if addr else None
+
+
+def _socket_info(conn, direction: str) -> dict:
+    """psutil 소켓 정보를 API 응답용 dict로 변환"""
+    laddr = _format_addr(conn.laddr)
+    raddr = _format_addr(conn.raddr)
+    if direction == "outbound":
+        desc = f"외부 서버({raddr})로의 호출"
+    elif conn.status == psutil.CONN_LISTEN:
+        desc = "서버 수신 대기 (LISTEN)"
+    else:
+        desc = f"클라이언트({raddr})의 접속"
+    return {
+        "fd": conn.fd,
+        "direction": direction,
+        "status": conn.status,
+        "local_address": laddr,
+        "remote_address": raddr,
+        "description": desc,
+    }
+
+
 def get_tcp_connection_details() -> dict:
     """현재 프로세스의 인바운드 및 아웃바운드 소켓 상세 정보 반환 (API용)"""
     outbound_conns, inbound_conns, listen_ports, pid = _classify_tcp_connections()
@@ -128,34 +152,8 @@ def get_tcp_connection_details() -> dict:
     outbound_status_counts = Counter(conn.status for conn in outbound_conns)
     inbound_status_counts = Counter(conn.status for conn in inbound_conns)
 
-    sockets_detail = []
-
-    # Outbound 소켓
-    for c in outbound_conns:
-        laddr = f"{c.laddr.ip}:{c.laddr.port}" if c.laddr else None
-        raddr = f"{c.raddr.ip}:{c.raddr.port}" if c.raddr else None
-        sockets_detail.append({
-            "fd": c.fd,
-            "direction": "outbound",
-            "status": c.status,
-            "local_address": laddr,
-            "remote_address": raddr,
-            "description": f"외부 서버({raddr})로의 호출",
-        })
-
-    # Inbound 소켓
-    for c in inbound_conns:
-        laddr = f"{c.laddr.ip}:{c.laddr.port}" if c.laddr else None
-        raddr = f"{c.raddr.ip}:{c.raddr.port}" if c.raddr else None
-        desc = "서버 수신 대기 (LISTEN)" if c.status == psutil.CONN_LISTEN else f"클라이언트({raddr})의 접속"
-        sockets_detail.append({
-            "fd": c.fd,
-            "direction": "inbound",
-            "status": c.status,
-            "local_address": laddr,
-            "remote_address": raddr,
-            "description": desc,
-        })
+    sockets_detail = [_socket_info(c, "outbound") for c in outbound_conns]
+    sockets_detail += [_socket_info(c, "inbound") for c in inbound_conns]
 
     return {
         "pid": pid,

@@ -1,6 +1,5 @@
-from datetime import datetime, timezone
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 import httpx
 from elasticsearch import AsyncElasticsearch, exceptions
 from elastic_transport import HttpxAsyncHttpNode
@@ -11,6 +10,21 @@ from app.http_pool import get_shared_transport
 logger = logging.getLogger("es_service")
 
 es_client: Optional[AsyncElasticsearch] = None
+
+# 기본 인덱스 매핑
+DEFAULT_MAPPINGS: Dict[str, Any] = {
+    "properties": {
+        "title": {
+            "type": "text",
+            "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
+        },
+        "content": {"type": "text"},
+        "author": {"type": "keyword"},
+        "tags": {"type": "keyword"},
+        "created_at": {"type": "date"},
+        "extra": {"type": "object", "dynamic": True},
+    }
+}
 
 
 class SharedPoolHttpxNode(HttpxAsyncHttpNode):
@@ -39,32 +53,30 @@ async def get_es() -> AsyncElasticsearch:
     return es_client
 
 
+def _create_client() -> AsyncElasticsearch:
+    """백엔드 설정(HTTP_CLIENT_BACKEND)에 따라 Elasticsearch 클라이언트 생성"""
+    options: Dict[str, Any] = {
+        "hosts": [settings.ELASTICSEARCH_URL],
+        "request_timeout": settings.ES_REQUEST_TIMEOUT,
+        "max_retries": 3,
+        "retry_on_timeout": True,
+    }
+    if settings.HTTP_CLIENT_BACKEND == "httpx":
+        logger.info("Elasticsearch 백엔드로 'httpx' 공유 커넥션 풀(SharedPoolHttpxNode)을 사용합니다.")
+        options["node_class"] = SharedPoolHttpxNode
+    else:
+        logger.info("Elasticsearch 백엔드로 기본 'aiohttp'를 사용합니다.")
+    return AsyncElasticsearch(**options)
+
+
 async def init_es() -> AsyncElasticsearch:
     """앱 시작 시 Elasticsearch 클라이언트 초기화 및 기본 인덱스 확인"""
     global es_client
 
-    # 백엔드 설정에 따라 Elasticsearch 클라이언트 생성
-    if settings.HTTP_CLIENT_BACKEND == "httpx":
-        logger.info("Elasticsearch 백엔드로 'httpx' 공유 커넥션 풀(SharedPoolHttpxNode)을 사용합니다.")
-        es_client = AsyncElasticsearch(
-            hosts=[settings.ELASTICSEARCH_URL],
-            node_class=SharedPoolHttpxNode,
-            request_timeout=settings.ES_REQUEST_TIMEOUT,
-            max_retries=3,
-            retry_on_timeout=True,
-        )
-    else:
-        logger.info("Elasticsearch 백엔드로 기본 'aiohttp'를 사용합니다.")
-        es_client = AsyncElasticsearch(
-            hosts=[settings.ELASTICSEARCH_URL],
-            request_timeout=settings.ES_REQUEST_TIMEOUT,
-            max_retries=3,
-            retry_on_timeout=True,
-        )
+    es_client = _create_client()
 
     try:
-        ping = await es_client.ping()
-        if ping:
+        if await es_client.ping():
             logger.info("Elasticsearch에 성공적으로 연결되었습니다: %s", settings.ELASTICSEARCH_URL)
             await ensure_index_exists(settings.DEFAULT_INDEX)
         else:
@@ -81,6 +93,7 @@ async def close_es():
 
     if es_client is not None:
         await es_client.close()
+        es_client = None
         logger.info("Elasticsearch 클라이언트가 종료되었습니다.")
 
 
@@ -91,24 +104,8 @@ async def ensure_index_exists(index_name: Optional[str] = None):
 
     target_index = index_name or settings.DEFAULT_INDEX
     try:
-        exists = await es_client.indices.exists(index=target_index)
-        if not exists:
-            mapping = {
-                "mappings": {
-                    "properties": {
-                        "title": {
-                            "type": "text",
-                            "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
-                        },
-                        "content": {"type": "text"},
-                        "author": {"type": "keyword"},
-                        "tags": {"type": "keyword"},
-                        "created_at": {"type": "date"},
-                        "extra": {"type": "object", "dynamic": True},
-                    }
-                }
-            }
-            await es_client.indices.create(index=target_index, body=mapping)
+        if not await es_client.indices.exists(index=target_index):
+            await es_client.indices.create(index=target_index, mappings=DEFAULT_MAPPINGS)
             logger.info("인덱스 '%s'가 생성되었습니다.", target_index)
     except Exception as e:
         logger.error("인덱스 확인/생성 중 오류 발생: %s", e)
